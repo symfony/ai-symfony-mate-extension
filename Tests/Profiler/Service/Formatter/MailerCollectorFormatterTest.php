@@ -70,12 +70,12 @@ final class MailerCollectorFormatterTest extends TestCase
         $this->assertSame('smtp', $message['transport']);
         $this->assertFalse($message['is_queued']);
         $this->assertSame('Test Subject', $message['subject']);
-        $this->assertSame(['John Sender <sender@example.com>'], $message['from']);
-        $this->assertSame(['Jane Recipient <recipient@example.com>'], $message['to']);
+        $this->assertSame(['***@example.com'], $message['from']);
+        $this->assertSame(['***@example.com'], $message['to']);
         $this->assertSame([], $message['cc']);
         $this->assertSame([], $message['bcc']);
         $this->assertSame([], $message['reply_to']);
-        $this->assertSame('This is the body text.', $message['text_body']);
+        $this->assertTrue($message['has_text_body']);
         $this->assertFalse($message['has_html_body']);
         $this->assertSame([], $message['attachments']);
     }
@@ -111,7 +111,7 @@ final class MailerCollectorFormatterTest extends TestCase
 
         $result = $this->formatter->format($collector);
 
-        $this->assertNull($result['messages'][0]['text_body']);
+        $this->assertFalse($result['messages'][0]['has_text_body']);
         $this->assertTrue($result['messages'][0]['has_html_body']);
     }
 
@@ -132,21 +132,20 @@ final class MailerCollectorFormatterTest extends TestCase
         $result = $this->formatter->format($collector);
 
         $message = $result['messages'][0];
-        $this->assertSame(['sender@example.com'], $message['from']);
-        $this->assertSame(['to@example.com'], $message['to']);
-        $this->assertSame(['cc@example.com'], $message['cc']);
-        $this->assertSame(['bcc@example.com'], $message['bcc']);
-        $this->assertSame(['reply@example.com'], $message['reply_to']);
+        $this->assertSame(['***@example.com'], $message['from']);
+        $this->assertSame(['***@example.com'], $message['to']);
+        $this->assertSame(['***@example.com'], $message['cc']);
+        $this->assertSame(['***@example.com'], $message['bcc']);
+        $this->assertSame(['***@example.com'], $message['reply_to']);
     }
 
-    public function testFormatTruncatesLongBody()
+    public function testFormatOmitsEmailBody()
     {
-        $longBody = str_repeat('a', 600);
         $email = (new Email())
             ->from('sender@example.com')
             ->to('recipient@example.com')
-            ->subject('Long Body')
-            ->text($longBody);
+            ->subject('Sensitive')
+            ->text('Your one-time code is 123456 and your SSN is 000-00-0000.');
 
         $collector = $this->createCollectorWithMessages([
             $this->createMessageEvent($email, 'smtp', false),
@@ -154,8 +153,86 @@ final class MailerCollectorFormatterTest extends TestCase
 
         $result = $this->formatter->format($collector);
 
-        $this->assertSame(503, mb_strlen($result['messages'][0]['text_body']));
-        $this->assertStringEndsWith('...', $result['messages'][0]['text_body']);
+        $message = $result['messages'][0];
+        $this->assertArrayNotHasKey('text_body', $message);
+        $this->assertTrue($message['has_text_body']);
+        $this->assertStringNotContainsString('123456', json_encode($message));
+        $this->assertStringNotContainsString('000-00-0000', json_encode($message));
+    }
+
+    public function testFormatStripsTokensFromLinks()
+    {
+        $email = (new Email())
+            ->from('sender@example.com')
+            ->to('recipient@example.com')
+            ->subject('Reset your password')
+            ->text('Reset here: https://app.example.com/reset?token=SECRET-TOKEN&id=5#frag')
+            ->html('<a href="https://app.example.com/verify/path?code=ANOTHER-SECRET">verify</a>');
+
+        $collector = $this->createCollectorWithMessages([
+            $this->createMessageEvent($email, 'smtp', false),
+        ]);
+
+        $result = $this->formatter->format($collector);
+
+        $this->assertSame(
+            ['https://app.example.com/reset', 'https://app.example.com/verify/path'],
+            $result['messages'][0]['links']
+        );
+
+        $serialized = json_encode($result);
+        $this->assertStringNotContainsString('SECRET-TOKEN', $serialized);
+        $this->assertStringNotContainsString('ANOTHER-SECRET', $serialized);
+    }
+
+    public function testFormatMasksPathEmbeddedTokens()
+    {
+        // Canonical SymfonyCasts reset flow puts the token in the path, not the query.
+        $resetToken = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+        $email = (new Email())
+            ->from('sender@example.com')
+            ->to('recipient@example.com')
+            ->subject('Reset your password')
+            ->text('Reset: https://app.example.com/reset-password/reset/'.$resetToken);
+
+        $collector = $this->createCollectorWithMessages([
+            $this->createMessageEvent($email, 'smtp', false),
+        ]);
+
+        $result = $this->formatter->format($collector);
+
+        $links = $result['messages'][0]['links'];
+        // The descriptive part of the path is kept; the token segment is masked.
+        $this->assertSame(['https://app.example.com/reset-password/reset/***'], $links);
+        $this->assertStringNotContainsString($resetToken, json_encode($result));
+    }
+
+    public function testFormatMasksShortHexAndUuidPathTokensButKeepsSlugs()
+    {
+        $email = (new Email())
+            ->from('sender@example.com')
+            ->to('recipient@example.com')
+            ->subject('links')
+            ->text(implode(' ', [
+                'https://app.test/verify/0123456789abcdef',                  // 16-char hex token
+                'https://app.test/u/550e8400-e29b-41d4-a716-446655440000',   // uuid token
+                'https://app.test/blog/how-to-configure-the-symfony-mailer', // descriptive slug
+            ]));
+
+        $collector = $this->createCollectorWithMessages([
+            $this->createMessageEvent($email, 'smtp', false),
+        ]);
+
+        $links = $this->formatter->format($collector)['messages'][0]['links'];
+
+        $this->assertContains('https://app.test/verify/***', $links);
+        $this->assertContains('https://app.test/u/***', $links);
+        // A long descriptive slug is preserved so the endpoint stays visible.
+        $this->assertContains('https://app.test/blog/how-to-configure-the-symfony-mailer', $links);
+
+        $serialized = json_encode($links);
+        $this->assertStringNotContainsString('0123456789abcdef', $serialized);
+        $this->assertStringNotContainsString('550e8400', $serialized);
     }
 
     public function testFormatWithAttachments()

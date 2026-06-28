@@ -16,13 +16,14 @@ use Symfony\Component\HttpKernel\DataCollector\DataCollectorInterface;
 use Symfony\Component\Mailer\DataCollector\MessageDataCollector;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email;
-use Symfony\Component\String\UnicodeString;
 
 /**
  * Formats Mailer collector data for AI consumption.
  *
- * Extracts email message details including recipients, subject,
- * body preview, attachments, and transport information.
+ * Extracts email message metadata (subject, masked recipients, attachments,
+ * transport). Email bodies are omitted and links are stripped of their query
+ * string and fragment, since reset/verify/magic-login URLs and the body itself
+ * routinely carry one-time tokens and personal data that must not reach the AI.
  *
  * @author Johannes Wachter <johannes@sulu.io>
  *
@@ -32,8 +33,6 @@ use Symfony\Component\String\UnicodeString;
  */
 final class MailerCollectorFormatter implements CollectorFormatterInterface
 {
-    private const MAX_BODY_LENGTH = 500;
-
     public function getName(): string
     {
         return 'mailer';
@@ -93,8 +92,6 @@ final class MailerCollectorFormatter implements CollectorFormatterInterface
      */
     private function formatEmail(Email $email): array
     {
-        $textBody = $email->getTextBody();
-
         return [
             'subject' => $email->getSubject(),
             'from' => $this->formatAddresses($email->getFrom()),
@@ -102,14 +99,16 @@ final class MailerCollectorFormatter implements CollectorFormatterInterface
             'cc' => $this->formatAddresses($email->getCc()),
             'bcc' => $this->formatAddresses($email->getBcc()),
             'reply_to' => $this->formatAddresses($email->getReplyTo()),
-            'text_body' => null !== $textBody ? $this->truncateBody($textBody) : null,
-            'links' => $this->extractLinks($textBody, $email->getHtmlBody()),
+            'has_text_body' => null !== $email->getTextBody(),
             'has_html_body' => null !== $email->getHtmlBody(),
+            'links' => $this->extractLinks($email->getTextBody(), $email->getHtmlBody()),
             'attachments' => $this->formatAttachments($email),
         ];
     }
 
     /**
+     * Mask recipient PII (local part replaced with `***`, display name dropped).
+     *
      * @param Address[] $addresses
      *
      * @return string[]
@@ -117,11 +116,19 @@ final class MailerCollectorFormatter implements CollectorFormatterInterface
     private function formatAddresses(array $addresses): array
     {
         return array_map(
-            static fn (Address $address): string => '' !== $address->getName()
-                ? \sprintf('%s <%s>', $address->getName(), $address->getAddress())
-                : $address->getAddress(),
+            fn (Address $address): string => $this->maskAddress($address->getAddress()),
             $addresses
         );
+    }
+
+    private function maskAddress(string $address): string
+    {
+        $atPosition = strrpos($address, '@');
+        if (false === $atPosition) {
+            return '***';
+        }
+
+        return '***'.substr($address, $atPosition);
     }
 
     /**
@@ -141,18 +148,61 @@ final class MailerCollectorFormatter implements CollectorFormatterInterface
             $links = array_merge($links, $matches[1]);
         }
 
-        return array_values(array_unique($links));
-    }
-
-    private function truncateBody(string $body): string
-    {
-        $unicode = new UnicodeString($body);
-
-        if ($unicode->length() <= self::MAX_BODY_LENGTH) {
-            return $body;
+        $sanitized = [];
+        foreach ($links as $link) {
+            $clean = $this->stripUrlSecrets($link);
+            if (null !== $clean) {
+                $sanitized[] = $clean;
+            }
         }
 
-        return $unicode->slice(0, self::MAX_BODY_LENGTH)->toString().'...';
+        return array_values(array_unique($sanitized));
+    }
+
+    /**
+     * Keep scheme, host and the descriptive path so the AI sees which endpoint
+     * was linked, but drop userinfo, query string and fragment, and mask any
+     * high-entropy path segment — reset/verify/magic-login flows put the
+     * one-time token in the path (e.g. `/reset-password/reset/{token}`), not
+     * only the query string.
+     */
+    private function stripUrlSecrets(string $url): ?string
+    {
+        $parts = parse_url($url);
+        if (false === $parts || !isset($parts['host'])) {
+            return null;
+        }
+
+        $scheme = isset($parts['scheme']) ? $parts['scheme'].'://' : '';
+        $port = isset($parts['port']) ? ':'.$parts['port'] : '';
+
+        return $scheme.$parts['host'].$port.$this->maskPathTokens($parts['path'] ?? '');
+    }
+
+    private function maskPathTokens(string $path): string
+    {
+        $segments = explode('/', $path);
+        foreach ($segments as $index => $segment) {
+            if ($this->looksLikeToken($segment)) {
+                $segments[$index] = '***';
+            }
+        }
+
+        return implode('/', $segments);
+    }
+
+    private function looksLikeToken(string $segment): bool
+    {
+        // Short segments are ids or descriptive words; keep them.
+        if (\strlen($segment) < 16) {
+            return false;
+        }
+
+        // A descriptive slug — lowercase words separated by single hyphens or
+        // underscores, each starting with a letter — is kept so the AI still
+        // sees the endpoint. Anything else of length >= 16 (hex/base64 blobs,
+        // UUIDs, mixed-case or digit-bearing opaque strings) is a likely token.
+        return 1 !== preg_match('/^[a-z][a-z0-9]*(?:[_-][a-z][a-z0-9]*)+$/', $segment);
     }
 
     /**
