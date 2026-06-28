@@ -56,10 +56,10 @@ class ServiceTool
         if (!$this->hasContexts) {
             $container = $containers[0] ?? null;
             if (null === $container) {
-                return ResponseEncoder::encode([]);
+                return ResponseEncoder::encodeUntrusted([]);
             }
 
-            return ResponseEncoder::encode($this->collectServices($container, $query, $tag));
+            return ResponseEncoder::encodeUntrusted($this->collectServices($container, $query, $tag));
         }
 
         $output = [];
@@ -67,7 +67,7 @@ class ServiceTool
             $output[$containerContext] = $this->collectServices($container, $query, $tag);
         }
 
-        return ResponseEncoder::encode($output);
+        return ResponseEncoder::encodeUntrusted($output);
     }
 
     /**
@@ -120,7 +120,7 @@ class ServiceTool
                 $output['context'] = $containerContext;
             }
 
-            return ResponseEncoder::encode($output);
+            return ResponseEncoder::encodeUntrusted($output);
         }
 
         throw new ServiceNotFoundException(\sprintf('Service "%s" not found in the container.', $id));

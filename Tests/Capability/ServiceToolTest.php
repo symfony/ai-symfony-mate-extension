@@ -17,6 +17,7 @@ use PHPUnit\Framework\TestCase;
 use Symfony\AI\Mate\Bridge\Symfony\Capability\ServiceTool;
 use Symfony\AI\Mate\Bridge\Symfony\Exception\ServiceNotFoundException;
 use Symfony\AI\Mate\Bridge\Symfony\Service\ContainerProvider;
+use Symfony\AI\Mate\Encoding\ResponseEncoder;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 
@@ -37,7 +38,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices());
 
         $this->assertArrayHasKey('cache.app', $services);
         $this->assertArrayHasKey('logger', $services);
@@ -53,7 +54,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool('/non/existent/directory', $provider);
 
-        $services = Toon::decode($tool->getServices(), DecodeOptions::lenient());
+        $services = $this->decodeUntrusted($tool->getServices(), DecodeOptions::lenient());
 
         $this->assertEmpty($services);
     }
@@ -63,7 +64,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices());
 
         $this->assertArrayHasKey('event_dispatcher', $services);
         $this->assertSame('Symfony\Component\EventDispatcher\EventDispatcher', $services['event_dispatcher']);
@@ -74,7 +75,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices());
 
         $this->assertArrayHasKey('cache.app', $services);
         $this->assertArrayHasKey('logger', $services);
@@ -85,7 +86,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices());
 
         // my_service is an alias to cache.app
         $this->assertArrayHasKey('my_service', $services);
@@ -97,7 +98,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices());
 
         // .service_locator.abc123 should be accessible without the leading dot
         $this->assertArrayHasKey('service_locator.abc123', $services);
@@ -108,7 +109,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices());
 
         $this->assertArrayHasKey('router', $services);
         $this->assertSame('Symfony\Component\Routing\Router', $services['router']);
@@ -119,7 +120,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices('cache'));
+        $services = $this->decodeUntrusted($tool->getServices('cache'));
 
         $this->assertArrayHasKey('cache.app', $services);
         $this->assertArrayNotHasKey('logger', $services);
@@ -131,7 +132,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices('NullLogger'));
+        $services = $this->decodeUntrusted($tool->getServices('NullLogger'));
 
         $this->assertArrayHasKey('logger', $services);
         $this->assertArrayNotHasKey('cache.app', $services);
@@ -142,7 +143,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices('CACHE'));
+        $services = $this->decodeUntrusted($tool->getServices('CACHE'));
 
         $this->assertArrayHasKey('cache.app', $services);
     }
@@ -152,8 +153,8 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $allServices = Toon::decode($tool->getServices());
-        $emptyQueryServices = Toon::decode($tool->getServices(''));
+        $allServices = $this->decodeUntrusted($tool->getServices());
+        $emptyQueryServices = $this->decodeUntrusted($tool->getServices(''));
 
         $this->assertSame($allServices, $emptyQueryServices);
     }
@@ -163,7 +164,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices('nonexistent_service_xyz'), DecodeOptions::lenient());
+        $services = $this->decodeUntrusted($tool->getServices('nonexistent_service_xyz'), DecodeOptions::lenient());
 
         $this->assertEmpty($services);
     }
@@ -173,7 +174,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices(tag: 'kernel.event_listener'));
+        $services = $this->decodeUntrusted($tool->getServices(tag: 'kernel.event_listener'));
 
         $this->assertArrayHasKey('app.event_listener', $services);
         $this->assertSame('App\EventListener\RequestListener', $services['app.event_listener']);
@@ -184,7 +185,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices(tag: 'cache.pool'));
+        $services = $this->decodeUntrusted($tool->getServices(tag: 'cache.pool'));
 
         $this->assertArrayHasKey('cache.app', $services);
         $this->assertArrayNotHasKey('logger', $services);
@@ -197,7 +198,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices(tag: 'nonexistent.tag'), DecodeOptions::lenient());
+        $services = $this->decodeUntrusted($tool->getServices(tag: 'nonexistent.tag'), DecodeOptions::lenient());
 
         $this->assertEmpty($services);
     }
@@ -207,7 +208,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = Toon::decode($tool->getServices(query: 'listener', tag: 'kernel.event_listener'));
+        $services = $this->decodeUntrusted($tool->getServices(query: 'listener', tag: 'kernel.event_listener'));
 
         $this->assertArrayHasKey('app.event_listener', $services);
         $this->assertArrayNotHasKey('cache.app', $services);
@@ -219,7 +220,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $detail = Toon::decode($tool->getServiceDetail('cache.app'));
+        $detail = $this->decodeUntrusted($tool->getServiceDetail('cache.app'));
 
         $this->assertSame('cache.app', $detail['id']);
         $this->assertSame(FilesystemAdapter::class, $detail['class']);
@@ -232,7 +233,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $detail = Toon::decode($tool->getServiceDetail('logger'));
+        $detail = $this->decodeUntrusted($tool->getServiceDetail('logger'));
 
         $this->assertCount(1, $detail['tags']);
         $this->assertSame('monolog.logger', $detail['tags'][0]['name']);
@@ -244,7 +245,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $detail = Toon::decode($tool->getServiceDetail('event_dispatcher'));
+        $detail = $this->decodeUntrusted($tool->getServiceDetail('event_dispatcher'));
 
         $this->assertContains('addListener', $detail['calls']);
     }
@@ -254,7 +255,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $detail = Toon::decode($tool->getServiceDetail('router'));
+        $detail = $this->decodeUntrusted($tool->getServiceDetail('router'));
 
         $this->assertSame('RouterFactory::create', $detail['factory']);
     }
@@ -281,7 +282,7 @@ final class ServiceToolTest extends TestCase
     {
         $tool = $this->createMultiKernelTool();
 
-        $services = Toon::decode($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices());
 
         $this->assertArrayHasKey('website', $services);
         $this->assertArrayHasKey('admin', $services);
@@ -295,7 +296,7 @@ final class ServiceToolTest extends TestCase
     {
         $tool = $this->createMultiKernelTool();
 
-        $services = Toon::decode($tool->getServices(context: 'admin'));
+        $services = $this->decodeUntrusted($tool->getServices(context: 'admin'));
 
         $this->assertSame(['admin'], array_keys($services));
         $this->assertArrayHasKey('admin.dashboard', $services['admin']);
@@ -305,7 +306,7 @@ final class ServiceToolTest extends TestCase
     {
         $tool = $this->createMultiKernelTool();
 
-        $services = Toon::decode($tool->getServices(tag: 'cache.pool'));
+        $services = $this->decodeUntrusted($tool->getServices(tag: 'cache.pool'));
 
         $this->assertArrayNotHasKey('logger', $services['website']);
         $this->assertSame(['cache.app'], array_keys($services['admin']));
@@ -317,7 +318,7 @@ final class ServiceToolTest extends TestCase
     {
         $tool = $this->createMultiKernelTool();
 
-        $detail = Toon::decode($tool->getServiceDetail('admin.dashboard'));
+        $detail = $this->decodeUntrusted($tool->getServiceDetail('admin.dashboard'));
 
         $this->assertSame('admin.dashboard', $detail['id']);
         $this->assertSame('admin', $detail['context']);
@@ -327,7 +328,7 @@ final class ServiceToolTest extends TestCase
     {
         $tool = $this->createMultiKernelTool();
 
-        $detail = Toon::decode($tool->getServiceDetail('cache.app'));
+        $detail = $this->decodeUntrusted($tool->getServiceDetail('cache.app'));
 
         $this->assertSame(FilesystemAdapter::class, $detail['class']);
         $this->assertSame('website', $detail['context']);
@@ -337,7 +338,7 @@ final class ServiceToolTest extends TestCase
     {
         $tool = $this->createMultiKernelTool();
 
-        $detail = Toon::decode($tool->getServiceDetail('cache.app', 'admin'));
+        $detail = $this->decodeUntrusted($tool->getServiceDetail('cache.app', 'admin'));
 
         $this->assertSame(ArrayAdapter::class, $detail['class']);
         $this->assertSame('admin', $detail['context']);
@@ -356,7 +357,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $detail = Toon::decode($tool->getServiceDetail('cache.app'));
+        $detail = $this->decodeUntrusted($tool->getServiceDetail('cache.app'));
 
         $this->assertArrayNotHasKey('context', $detail);
     }
@@ -383,7 +384,7 @@ XML;
             $provider = new ContainerProvider();
             $tool = new ServiceTool($tempDir, $provider);
 
-            $services = Toon::decode($tool->getServices());
+            $services = $this->decodeUntrusted($tool->getServices());
 
             $this->assertArrayHasKey('custom.service', $services);
             $this->assertSame('Custom\ServiceClass', $services['custom.service']);
@@ -403,5 +404,21 @@ XML;
             'website' => $this->fixturesDir,
             'admin' => $this->fixturesDir.'/admin',
         ], new ContainerProvider());
+    }
+
+    /**
+     * Decodes a tool response that is expected to carry the untrusted-data
+     * envelope, asserts the security notice is present, and returns the payload.
+     *
+     * @return array<string, mixed>
+     */
+    private function decodeUntrusted(string $response, ?DecodeOptions $options = null): array
+    {
+        $decoded = null !== $options ? Toon::decode($response, $options) : Toon::decode($response);
+
+        $this->assertIsArray($decoded);
+        $this->assertSame(ResponseEncoder::UNTRUSTED_NOTICE, $decoded['_security_notice']);
+
+        return $decoded['untrusted_data'];
     }
 }

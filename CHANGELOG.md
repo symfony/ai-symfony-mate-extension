@@ -4,6 +4,7 @@ CHANGELOG
 0.13
 ----
 
+ * Mark the output of `symfony-profiler-list`, `symfony-profiler-get`, `symfony-services`, `symfony-service-detail` and the profiler resources as untrusted data, since request/response payloads, SQL queries and container metadata are frequently controlled by end users or third-party packages
  * Allow `ai_mate_symfony.cache_dir` to be a map of context name to cache directory, so a single Mate server can introspect the containers of multi-kernel (`APP_ID`) applications. `symfony-services` then returns the services grouped per context, `symfony-service-detail` reports the context a service was found in, and both accept an optional `context` filter parameter
 
 0.7
