@@ -61,35 +61,27 @@ return static function (ContainerConfigurator $configurator) {
 
         // Built-in collector formatters
         $services->set(RequestCollectorFormatter::class)
-            ->lazy()
             ->tag('ai_mate.profiler_collector_formatter');
 
         $services->set(ExceptionCollectorFormatter::class)
-            ->lazy()
             ->tag('ai_mate.profiler_collector_formatter');
 
         $services->set(MailerCollectorFormatter::class)
-            ->lazy()
             ->tag('ai_mate.profiler_collector_formatter');
 
         $services->set(TranslationCollectorFormatter::class)
-            ->lazy()
             ->tag('ai_mate.profiler_collector_formatter');
 
         $services->set(DoctrineCollectorFormatter::class)
-            ->lazy()
             ->tag('ai_mate.profiler_collector_formatter');
 
         $services->set(TimeCollectorFormatter::class)
-            ->lazy()
             ->tag('ai_mate.profiler_collector_formatter');
 
         $services->set(LoggerCollectorFormatter::class)
-            ->lazy()
             ->tag('ai_mate.profiler_collector_formatter');
 
         $services->set(MemoryCollectorFormatter::class)
-            ->lazy()
             ->tag('ai_mate.profiler_collector_formatter');
 
         // MCP Capabilities
