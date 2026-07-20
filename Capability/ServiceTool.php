@@ -11,7 +11,8 @@
 
 namespace Symfony\AI\Mate\Bridge\Symfony\Capability;
 
-use Mcp\Capability\Attribute\McpTool;
+use Symfony\AI\Mate\Attribute\MateTool;
+use Symfony\AI\Mate\Bridge\Symfony\Exception\ContainerNotDumpedException;
 use Symfony\AI\Mate\Bridge\Symfony\Exception\ServiceNotFoundException;
 use Symfony\AI\Mate\Bridge\Symfony\Model\Container;
 use Symfony\AI\Mate\Bridge\Symfony\Service\ContainerProvider;
@@ -23,6 +24,12 @@ use Symfony\AI\Mate\Encoding\ResponseEncoder;
 class ServiceTool
 {
     private const ENVIRONMENTS = ['', '/dev', '/test', '/prod'];
+
+    /**
+     * The container of a real application holds thousands of services, so an unfiltered call
+     * would spend the whole context window on one answer.
+     */
+    private const DEFAULT_LIMIT = 100;
 
     /**
      * @var array<string|int, string>
@@ -47,24 +54,20 @@ class ServiceTool
      * @param string|null $query   Filter by service ID or class name (case-insensitive partial match)
      * @param string|null $tag     Filter by DI tag name (e.g. kernel.event_listener, twig.extension)
      * @param string|null $context Filter by Symfony kernel context, only relevant when multiple cache directories are configured
+     * @param int         $limit   Maximum number of services to return, per context
      */
-    #[McpTool(name: 'symfony-services', title: 'Symfony Services', description: 'Search Symfony dependency injection container services. Optionally filter by service ID, class name, or tag name. Returns a map of service IDs to their class names. When multiple kernel contexts are configured, the map is nested per context and can be narrowed with the context parameter.')]
-    public function getServices(?string $query = null, ?string $tag = null, ?string $context = null): string
+    #[MateTool(name: 'symfony-services', title: 'Symfony Services', description: 'Search Symfony dependency injection container services. Optionally filter by service ID, class name, or tag name. Returns the matches under "services", the number of matches as "count", and whether the map was cut short as "truncated". When multiple kernel contexts are configured, that result is nested per context and can be narrowed with the context parameter.')]
+    public function getServices(?string $query = null, ?string $tag = null, ?string $context = null, int $limit = self::DEFAULT_LIMIT): string
     {
         $containers = $this->readContainers($context);
 
         if (!$this->hasContexts) {
-            $container = $containers[0] ?? null;
-            if (null === $container) {
-                return ResponseEncoder::encodeUntrusted([]);
-            }
-
-            return ResponseEncoder::encodeUntrusted($this->collectServices($container, $query, $tag));
+            return ResponseEncoder::encodeUntrusted($this->collectServices($containers[0], $query, $tag, $limit));
         }
 
         $output = [];
         foreach ($containers as $containerContext => $container) {
-            $output[$containerContext] = $this->collectServices($container, $query, $tag);
+            $output[$containerContext] = $this->collectServices($container, $query, $tag, $limit);
         }
 
         return ResponseEncoder::encodeUntrusted($output);
@@ -74,13 +77,10 @@ class ServiceTool
      * @param string      $id      The exact service ID to retrieve details for
      * @param string|null $context Filter by Symfony kernel context, only relevant when multiple cache directories are configured
      */
-    #[McpTool(name: 'symfony-service-detail', title: 'Symfony Service Detail', description: 'Get full details of a single Symfony DI container service by its exact ID, including class, tags, method calls, and constructor/factory information. When multiple kernel contexts are configured, the containers are searched in order and the result carries the context it was found in.')]
+    #[MateTool(name: 'symfony-service-detail', title: 'Symfony Service Detail', description: 'Get full details of a single Symfony DI container service by its exact ID, including class, tags, method calls, and constructor/factory information. When multiple kernel contexts are configured, the containers are searched in order and the result carries the context it was found in.')]
     public function getServiceDetail(string $id, ?string $context = null): string
     {
         $containers = $this->readContainers($context);
-        if ([] === $containers) {
-            throw new ServiceNotFoundException(\sprintf('Service "%s" not found: container could not be loaded.', $id));
-        }
 
         foreach ($containers as $containerContext => $container) {
             $services = $container->getServices();
@@ -127,9 +127,9 @@ class ServiceTool
     }
 
     /**
-     * @return array<string, string|null>
+     * @return array{services: array<string, string|null>, count: int, truncated: bool}
      */
-    private function collectServices(Container $container, ?string $query, ?string $tag): array
+    private function collectServices(Container $container, ?string $query, ?string $tag, int $limit): array
     {
         $services = [];
         foreach ($container->getServices() as $service) {
@@ -157,7 +157,13 @@ class ServiceTool
             $services[$service->getId()] = $service->getClass();
         }
 
-        return $services;
+        $count = \count($services);
+        $truncated = $limit > 0 && $count > $limit;
+        if ($truncated) {
+            $services = \array_slice($services, 0, $limit, true);
+        }
+
+        return ['services' => $services, 'count' => $count, 'truncated' => $truncated];
     }
 
     /**
@@ -177,6 +183,16 @@ class ServiceTool
             }
 
             $containers[$cacheContext] = $container;
+        }
+
+        // Answering with an empty result here is indistinguishable from an application that
+        // really has no matching service, which sends the caller looking for the wrong thing.
+        if ([] === $containers) {
+            if (null !== $context && '' !== $context) {
+                throw new ContainerNotDumpedException(\sprintf('No compiled container found for context "%s". Known contexts: "%s".', $context, implode('", "', array_map(strval(...), array_keys($this->cacheDirs)))));
+            }
+
+            throw new ContainerNotDumpedException(\sprintf('No compiled container found under "%s". Warm the cache first, for example with "bin/console cache:warmup", then run this tool again.', implode('", "', $this->cacheDirs)));
         }
 
         return $containers;

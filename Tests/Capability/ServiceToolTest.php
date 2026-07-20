@@ -15,6 +15,7 @@ use HelgeSverre\Toon\DecodeOptions;
 use HelgeSverre\Toon\Toon;
 use PHPUnit\Framework\TestCase;
 use Symfony\AI\Mate\Bridge\Symfony\Capability\ServiceTool;
+use Symfony\AI\Mate\Bridge\Symfony\Exception\ContainerNotDumpedException;
 use Symfony\AI\Mate\Bridge\Symfony\Exception\ServiceNotFoundException;
 use Symfony\AI\Mate\Bridge\Symfony\Service\ContainerProvider;
 use Symfony\AI\Mate\Encoding\ResponseEncoder;
@@ -38,7 +39,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices())['services'];
 
         $this->assertArrayHasKey('cache.app', $services);
         $this->assertArrayHasKey('logger', $services);
@@ -49,14 +50,30 @@ final class ServiceToolTest extends TestCase
         $this->assertSame('Symfony\Component\EventDispatcher\EventDispatcher', $services['event_dispatcher']);
     }
 
-    public function testGetServicesReturnsEmptyArrayWhenContainerNotFound()
+    public function testGetServicesFailsWhenNoContainerHasBeenDumped()
     {
         $provider = new ContainerProvider();
         $tool = new ServiceTool('/non/existent/directory', $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices(), DecodeOptions::lenient());
+        $this->expectException(ContainerNotDumpedException::class);
+        $this->expectExceptionMessage('No compiled container found under "/non/existent/directory"');
 
-        $this->assertEmpty($services);
+        $tool->getServices();
+    }
+
+    public function testGetServicesReportsTheMatchCountAndWhetherItCutTheList()
+    {
+        $provider = new ContainerProvider();
+        $tool = new ServiceTool($this->fixturesDir, $provider);
+
+        $full = $this->decodeUntrusted($tool->getServices());
+        $this->assertFalse($full['truncated']);
+        $this->assertSame(\count($full['services']), $full['count']);
+
+        $capped = $this->decodeUntrusted($tool->getServices(limit: 1));
+        $this->assertTrue($capped['truncated']);
+        $this->assertCount(1, $capped['services']);
+        $this->assertSame($full['count'], $capped['count']);
     }
 
     public function testGetServicesIncludesServicesWithMethodCalls()
@@ -64,7 +81,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices())['services'];
 
         $this->assertArrayHasKey('event_dispatcher', $services);
         $this->assertSame('Symfony\Component\EventDispatcher\EventDispatcher', $services['event_dispatcher']);
@@ -75,7 +92,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices())['services'];
 
         $this->assertArrayHasKey('cache.app', $services);
         $this->assertArrayHasKey('logger', $services);
@@ -86,7 +103,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices())['services'];
 
         // my_service is an alias to cache.app
         $this->assertArrayHasKey('my_service', $services);
@@ -98,7 +115,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices())['services'];
 
         // .service_locator.abc123 should be accessible without the leading dot
         $this->assertArrayHasKey('service_locator.abc123', $services);
@@ -109,7 +126,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices());
+        $services = $this->decodeUntrusted($tool->getServices())['services'];
 
         $this->assertArrayHasKey('router', $services);
         $this->assertSame('Symfony\Component\Routing\Router', $services['router']);
@@ -120,7 +137,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices('cache'));
+        $services = $this->decodeUntrusted($tool->getServices('cache'))['services'];
 
         $this->assertArrayHasKey('cache.app', $services);
         $this->assertArrayNotHasKey('logger', $services);
@@ -132,7 +149,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices('NullLogger'));
+        $services = $this->decodeUntrusted($tool->getServices('NullLogger'))['services'];
 
         $this->assertArrayHasKey('logger', $services);
         $this->assertArrayNotHasKey('cache.app', $services);
@@ -143,7 +160,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices('CACHE'));
+        $services = $this->decodeUntrusted($tool->getServices('CACHE'))['services'];
 
         $this->assertArrayHasKey('cache.app', $services);
     }
@@ -153,8 +170,8 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $allServices = $this->decodeUntrusted($tool->getServices());
-        $emptyQueryServices = $this->decodeUntrusted($tool->getServices(''));
+        $allServices = $this->decodeUntrusted($tool->getServices())['services'];
+        $emptyQueryServices = $this->decodeUntrusted($tool->getServices(''))['services'];
 
         $this->assertSame($allServices, $emptyQueryServices);
     }
@@ -164,7 +181,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices('nonexistent_service_xyz'), DecodeOptions::lenient());
+        $services = $this->decodeUntrusted($tool->getServices('nonexistent_service_xyz'), DecodeOptions::lenient())['services'];
 
         $this->assertEmpty($services);
     }
@@ -174,7 +191,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices(tag: 'kernel.event_listener'));
+        $services = $this->decodeUntrusted($tool->getServices(tag: 'kernel.event_listener'))['services'];
 
         $this->assertArrayHasKey('app.event_listener', $services);
         $this->assertSame('App\EventListener\RequestListener', $services['app.event_listener']);
@@ -185,7 +202,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices(tag: 'cache.pool'));
+        $services = $this->decodeUntrusted($tool->getServices(tag: 'cache.pool'))['services'];
 
         $this->assertArrayHasKey('cache.app', $services);
         $this->assertArrayNotHasKey('logger', $services);
@@ -198,7 +215,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices(tag: 'nonexistent.tag'), DecodeOptions::lenient());
+        $services = $this->decodeUntrusted($tool->getServices(tag: 'nonexistent.tag'), DecodeOptions::lenient())['services'];
 
         $this->assertEmpty($services);
     }
@@ -208,7 +225,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool($this->fixturesDir, $provider);
 
-        $services = $this->decodeUntrusted($tool->getServices(query: 'listener', tag: 'kernel.event_listener'));
+        $services = $this->decodeUntrusted($tool->getServices(query: 'listener', tag: 'kernel.event_listener'))['services'];
 
         $this->assertArrayHasKey('app.event_listener', $services);
         $this->assertArrayNotHasKey('cache.app', $services);
@@ -274,7 +291,7 @@ final class ServiceToolTest extends TestCase
         $provider = new ContainerProvider();
         $tool = new ServiceTool('/non/existent/directory', $provider);
 
-        $this->expectException(ServiceNotFoundException::class);
+        $this->expectException(ContainerNotDumpedException::class);
         $tool->getServiceDetail('cache.app');
     }
 
@@ -282,36 +299,36 @@ final class ServiceToolTest extends TestCase
     {
         $tool = $this->createMultiKernelTool();
 
-        $services = $this->decodeUntrusted($tool->getServices());
+        $byContext = $this->decodeUntrusted($tool->getServices());
 
-        $this->assertArrayHasKey('website', $services);
-        $this->assertArrayHasKey('admin', $services);
-        $this->assertArrayHasKey('event_dispatcher', $services['website']);
-        $this->assertArrayHasKey('admin.dashboard', $services['admin']);
-        $this->assertArrayNotHasKey('event_dispatcher', $services['admin']);
-        $this->assertSame('Admin\Controller\DashboardController', $services['admin']['admin.dashboard']);
+        $this->assertArrayHasKey('website', $byContext);
+        $this->assertArrayHasKey('admin', $byContext);
+        $this->assertArrayHasKey('event_dispatcher', $byContext['website']['services']);
+        $this->assertArrayHasKey('admin.dashboard', $byContext['admin']['services']);
+        $this->assertArrayNotHasKey('event_dispatcher', $byContext['admin']['services']);
+        $this->assertSame('Admin\Controller\DashboardController', $byContext['admin']['services']['admin.dashboard']);
     }
 
     public function testGetServicesFiltersByContext()
     {
         $tool = $this->createMultiKernelTool();
 
-        $services = $this->decodeUntrusted($tool->getServices(context: 'admin'));
+        $byContext = $this->decodeUntrusted($tool->getServices(context: 'admin'));
 
-        $this->assertSame(['admin'], array_keys($services));
-        $this->assertArrayHasKey('admin.dashboard', $services['admin']);
+        $this->assertSame(['admin'], array_keys($byContext));
+        $this->assertArrayHasKey('admin.dashboard', $byContext['admin']['services']);
     }
 
     public function testGetServicesAppliesFiltersPerContext()
     {
         $tool = $this->createMultiKernelTool();
 
-        $services = $this->decodeUntrusted($tool->getServices(tag: 'cache.pool'));
+        $byContext = $this->decodeUntrusted($tool->getServices(tag: 'cache.pool'));
 
-        $this->assertArrayNotHasKey('logger', $services['website']);
-        $this->assertSame(['cache.app'], array_keys($services['admin']));
-        $this->assertSame(FilesystemAdapter::class, $services['website']['cache.app']);
-        $this->assertSame(ArrayAdapter::class, $services['admin']['cache.app']);
+        $this->assertArrayNotHasKey('logger', $byContext['website']['services']);
+        $this->assertSame(['cache.app'], array_keys($byContext['admin']['services']));
+        $this->assertSame(FilesystemAdapter::class, $byContext['website']['services']['cache.app']);
+        $this->assertSame(ArrayAdapter::class, $byContext['admin']['services']['cache.app']);
     }
 
     public function testGetServiceDetailReturnsTheContextItWasFoundIn()
@@ -384,7 +401,7 @@ XML;
             $provider = new ContainerProvider();
             $tool = new ServiceTool($tempDir, $provider);
 
-            $services = $this->decodeUntrusted($tool->getServices());
+            $services = $this->decodeUntrusted($tool->getServices())['services'];
 
             $this->assertArrayHasKey('custom.service', $services);
             $this->assertSame('Custom\ServiceClass', $services['custom.service']);
